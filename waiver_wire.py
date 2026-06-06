@@ -57,11 +57,18 @@ def extract_waiver_sections(article_url: str) -> str:
     if not article_body:
         article_body = soup
 
+    # Preferred: specific named sections
     target_phrases = [
         "thursday's top waiver",
         "wednesday's standouts",
         "top waiver-wire targets",
         "top waiver wire targets",
+        "saturday's top waiver",
+        "friday's top waiver",
+        "this week's top waiver",
+        "waiver wire targets",
+        "players to add",
+        "streamers",
     ]
 
     sections = []
@@ -90,7 +97,14 @@ def extract_waiver_sections(article_url: str) -> str:
                 sections.append(content)
                 captured_count += 1
 
-    return "\n".join(sections).strip()
+    if sections:
+        return "\n".join(sections).strip()
+
+    # Fallback: return the full article text (first 4000 chars) so Claude
+    # can still extract useful info even if no section headers matched.
+    print("No target sections found — falling back to full article text.")
+    all_text = article_body.get_text(separator="\n", strip=True)
+    return all_text[:4000]
 
 
 def call_anthropic(content: str) -> str:
