@@ -23,11 +23,12 @@ ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 ANALYST_PROMPT = (
     "You are a fantasy baseball analyst. Based on this waiver wire column, "
     "give me the top 3 players to add and top 2 to drop for a 12-team rotisserie league. "
-    "Be concise — fit the entire response under 1500 characters so it fits in a text message. "
-    "Use short player names and abbreviations where possible."
+    "Be extremely concise — your entire response must be under 250 characters. "
+    "Format: ADD: player1, player2, player3 | DROP: player1, player2. "
+    "Use last names only."
 )
 
-SMS_MAX_CHARS = 1600
+SMS_MAX_CHARS = 300  # Trial accounts cap at ~2 segments (160 chars each); stay well under
 
 
 def find_waiver_wire_article_url() -> str | None:
@@ -173,7 +174,7 @@ def main() -> None:
     ai_response = call_anthropic(content)
     print(f"Got AI response ({len(ai_response)} chars).")
 
-    sms_body = truncate_to_sms(f"⚾ Fantasy Waiver Wire:\n\n{ai_response}")
+    sms_body = truncate_to_sms(f"Fantasy Waiver Wire:\n\n{ai_response}")
     send_sms(sms_body)
     print("SMS sent successfully.")
 
