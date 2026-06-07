@@ -3,7 +3,6 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from anthropic import Anthropic
-from twilio.rest import Client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,12 +22,12 @@ ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 ANALYST_PROMPT = (
     "You are a fantasy baseball analyst. Based on this waiver wire column, "
     "give me the top 3 players to add and top 2 to drop for a 12-team rotisserie league. "
-    "Be extremely concise — your entire response must be under 250 characters. "
+    "Be concise — fit the entire response under 1500 characters. "
     "Format: ADD: player1, player2, player3 | DROP: player1, player2. "
-    "Use last names only."
+    "Use last names only. Add a one-sentence reason for each player."
 )
 
-SMS_MAX_CHARS = 300  # Trial accounts cap at ~2 segments (160 chars each); stay well under
+NTFY_URL = f"https://ntfy.sh/{os.environ.get('NTFY_TOPIC', '')}"
 
 
 def find_waiver_wire_article_url() -> str | None:
@@ -58,7 +57,6 @@ def extract_waiver_sections(article_url: str) -> str:
     if not article_body:
         article_body = soup
 
-    # Preferred: specific named sections
     target_phrases = [
         "thursday's top waiver",
         "wednesday's standouts",
@@ -101,8 +99,7 @@ def extract_waiver_sections(article_url: str) -> str:
     if sections:
         return "\n".join(sections).strip()
 
-    # Fallback: return the full article text (first 4000 chars) so Claude
-    # can still extract useful info even if no section headers matched.
+    # Fallback: return the full article text (first 4000 chars)
     print("No target sections found — falling back to full article text.")
     all_text = article_body.get_text(separator="\n", strip=True)
     return all_text[:4000]
@@ -123,28 +120,14 @@ def call_anthropic(content: str) -> str:
     return message.content[0].text
 
 
-def truncate_to_sms(text: str, max_chars: int = SMS_MAX_CHARS) -> str:
-    if len(text) <= max_chars:
-        return text
-
-    truncated = text[:max_chars]
-    last_sentence_end = max(
-        truncated.rfind(". "),
-        truncated.rfind("! "),
-        truncated.rfind("? "),
+def send_notification(title: str, body: str) -> None:
+    resp = requests.post(
+        NTFY_URL,
+        data=body.encode("utf-8"),
+        headers={"Title": title},
+        timeout=10,
     )
-    if last_sentence_end > max_chars // 2:
-        return truncated[: last_sentence_end + 1].strip()
-    return truncated.rstrip() + "…"
-
-
-def send_sms(body: str) -> None:
-    client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-    client.messages.create(
-        body=body,
-        from_=os.environ["TWILIO_FROM_NUMBER"],
-        to=os.environ["TO_PHONE_NUMBER"],
-    )
+    resp.raise_for_status()
 
 
 def main() -> None:
@@ -152,21 +135,23 @@ def main() -> None:
 
     article_url = find_waiver_wire_article_url()
     if not article_url:
-        fallback = (
+        send_notification(
+            "Fantasy Waiver Wire",
             "Waiver wire column not found yet, check CBS Sports manually: "
-            "https://www.cbssports.com/fantasy/baseball/"
+            "https://www.cbssports.com/fantasy/baseball/",
         )
-        send_sms(fallback)
-        print("Article not found. Sent fallback SMS.")
+        print("Article not found. Sent fallback notification.")
         return
 
     print(f"Found article: {article_url}")
 
     content = extract_waiver_sections(article_url)
     if not content:
-        fallback = f"Waiver wire article found but couldn't extract sections. Read it here: {article_url}"
-        send_sms(fallback)
-        print("Could not extract sections. Sent fallback SMS.")
+        send_notification(
+            "Fantasy Waiver Wire",
+            f"Article found but couldn't extract sections. Read it here: {article_url}",
+        )
+        print("Could not extract sections. Sent fallback notification.")
         return
 
     print(f"Extracted {len(content)} characters of content.")
@@ -174,9 +159,8 @@ def main() -> None:
     ai_response = call_anthropic(content)
     print(f"Got AI response ({len(ai_response)} chars).")
 
-    sms_body = truncate_to_sms(f"Fantasy Waiver Wire:\n\n{ai_response}")
-    send_sms(sms_body)
-    print("SMS sent successfully.")
+    send_notification("Fantasy Waiver Wire", ai_response)
+    print("Notification sent successfully.")
 
 
 if __name__ == "__main__":
